@@ -1,15 +1,19 @@
+int stepms=10000; // ms to wait between updates of sensor-data
+
 #include "config.h"
 #include <WiFi.h>
-WiFiServer server(80);
+
+#include <ESPAsyncWebServer.h>
+AsyncWebServer asyncServer(80);
+
 #include <Preferences.h>
 Preferences preferences;
 String wifiSSID, wifiPassword;
+bool rebootOnNoWiFi; // Should it reboot if no WiFi could be connected?
 
 #define ESP32
 #include <SocketIOClient.h>
 SocketIOClient sIOclient;
-//char host[] = SOCKETIOHOST; // "192.168.1.221"
-//int port = SOCKETIOPORT; // 3000
 extern String RID;
 extern String Rname;
 extern String Rcontent;
@@ -31,7 +35,6 @@ RTC_DATA_ATTR int bootCount = 0;
 unsigned long timeflag = 0; // millis at last update
 RTC_DATA_ATTR int counter = 0; // current counter
 int temp = 0; // current temperature
-int stepms=10000; // ms to wait between updates
 int art_z=0;
 int art_d=0;
 unsigned long art_timestamp=0;
@@ -52,9 +55,11 @@ void setup()
 		
 	++bootCount;
 	Serial.println("Boot number: " + String(bootCount));
-	//DEEP SLEEP while PIN 33 is connected to GND
-	//esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,1); //1 = High, 0 = Low
-	//or while touchsensor on PIN15 isn't touched
+	////DEEP SLEEP while PIN 33 is connected to GND
+	//esp_err_t rtc_gpio_deinit(GPIO_NUM_33);
+	//esp_err_t rtc_gpio_pullup_en(GPIO_NUM_33);
+	//esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,0); //1 = High, 0 = Low
+	////or while touchsensor on PIN15 isn't touched
 	touchAttachInterrupt(T3, {}, 40); // T3=PIN15, Threshold=40
 	esp_sleep_enable_touchpad_wakeup();
 
@@ -63,38 +68,131 @@ void setup()
 	display.setSegments(data);
 	dht.begin();
 
-  WiFi.onEvent(WiFiEvent);
-  WiFi.mode(WIFI_MODE_AP);
-
-  loadPreferences();
+	loadPreferences();
+	WiFi.onEvent(WiFiEvent);
+	WiFi.mode(WIFI_MODE_AP);
 	setupAP();
+
+	asyncServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/H", HTTP_GET, [](AsyncWebServerRequest *request){
+		digitalWrite(2, HIGH); 
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/L", HTTP_GET, [](AsyncWebServerRequest *request){
+		digitalWrite(2, LOW); 
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/ON", HTTP_GET, [](AsyncWebServerRequest *request){
+		display.setBrightness(0x03, true);
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/OFF", HTTP_GET, [](AsyncWebServerRequest *request){
+		display.setBrightness(0x00, true);
+		request->send(200, "text/html", assambleRES());
+	}); 
+	asyncServer.on("/ART", HTTP_GET, [](AsyncWebServerRequest *request){
+		art(8480,80);
+		request->send(200, "text/html", assambleRES());
+	}); 
+	asyncServer.on("/TIME", HTTP_GET, [](AsyncWebServerRequest *request){
+		sIOclient.send("broadcast","get","time");
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/SCANNETWORKS", HTTP_GET, [](AsyncWebServerRequest *request){
+		doScanNetworks();
+		request->send(200, "text/html", assambleRES());
+	});
+	asyncServer.on("/CONNECTWIFI", HTTP_GET, [](AsyncWebServerRequest *request){
+		//connectWiFi();
+		request->send(200, "text/html", assambleRES());
+		restart=true;
+	});
+	asyncServer.on("/RESTART", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assambleRES());
+		restart=true;
+	});
+	asyncServer.on("/CONNECTSOCKET", HTTP_GET, [](AsyncWebServerRequest *request){
+		//connectSocketIO();
+		request->send(200, "text/html", assambleRES());
+		restart=true;
+	});
+	asyncServer.on("/SLEEP", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assambleRES());
+		deepsleep=true;
+	});
+	
+	asyncServer.on("/conf", HTTP_POST, [](AsyncWebServerRequest *request){
+		if (request->hasArg("ssid") && request->hasArg("pass")) {
+			savePreferences(request->arg("ssid"),request->arg("pass"),(request->arg("rebootOnNoWiFi")=="on"));
+			request->send(200, "text/html", request->arg("ssid")+" "+request->arg("pass")+" "+String(request->arg("rebootOnNoWiFi")=="on"));
+		} else {
+			request->send(200, "text/html", assambleRES());
+		}
+	}); 
+
+	asyncServer.begin();
+
 	connectWiFi();
-	server.begin();
 }
 
-bool clearPreferences() {
+void loop(){
+	if (deepsleep) {WiFi.disconnect(); delay(1000); goToDeepSleep();}
+	if (restart) {WiFi.disconnect(); delay(1000); ESP.restart();}
+	
+	art(0,0);
+	if (abs(millis()-timeflag)>stepms) {
+		Serial.print('.');
+		timeflag = millis();
+		if (art_z<1) {temp=read_dht22(); if (temp!=0&&temp<10000) {/*Serial.println();Serial.println("TEMP: "+String(temp));*/ updateDisplay(temp);};}
+		
+		if (sIOshouldBeConnected) {
+			if (!sIOclient.connected()) {sIOclient.disconnect(); sIOshouldBeConnected=false;} 
+			else {sIOclient.heartbeat(1);}
+		}
+		if (wifi_connected && !sIOshouldBeConnected) {
+			blink(5,50); 
+			connectSocketIO();
+		}
+	}
+
+	if (sIOshouldBeConnected && sIOclient.monitor())
+	{
+		blink(1,50);
+		Serial.print(RID+", ");
+		Serial.print(Rname+", ");
+		Serial.println(Rcontent);
+		if (Rname=="time") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b01000000, true, 4, 0);}
+	}
+}
+
+bool savePreferences(String qsid, String qpass, bool rebootOnNoWiFi) {
 	// Remove all preferences under opened namespace
 	preferences.clear();
-}
-
-bool savePreferences(String qsid, String qpass) {
 	preferences.begin("wifi", false);
 	preferences.putString("ssid", qsid);
 	preferences.putString("password", qpass);
+	preferences.putBool("rebootOnNoWiFi", rebootOnNoWiFi);
 	delay(300);
 	preferences.end();
-  wifiSSID = qsid;
-  wifiPassword = qpass;
-  loadPreferences();
+	wifiSSID = qsid;
+	wifiPassword = qpass;
+	loadPreferences();
 }
 
 bool loadPreferences() {
+	// Remove all preferences under opened namespace
+	preferences.clear();
 	preferences.begin("wifi", false);
-  wifiSSID =  preferences.getString("ssid", "none");
-  wifiPassword =  preferences.getString("password", "none");
-  preferences.end();
-  Serial.print("Stored SSID: ");
-  Serial.println(wifiSSID);
+	wifiSSID =  preferences.getString("ssid", "none");
+	wifiPassword =  preferences.getString("password", "none");
+	rebootOnNoWiFi =  preferences.getBool("rebootOnNoWiFi", false);
+	preferences.end();
+	Serial.print("Stored SSID: ");
+	Serial.println(wifiSSID);
+	Serial.print("rebootOnNoWiFi: ");
+	Serial.println(String(rebootOnNoWiFi));
 }
 
 bool setupAP() {
@@ -112,12 +210,13 @@ bool setupAP() {
 }
 
 bool connectWiFi() {
-  WiFi.mode(WIFI_MODE_APSTA);
+	WiFi.mode(WIFI_MODE_APSTA);
 	WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 	Serial.println("Trying to connect to WiFi "+wifiSSID+".");
-	int wait=12;
+	int wait=10;
 	while (WiFi.status() != WL_CONNECTED && wait>0) {wait--; delay(500); Serial.print("~");}
 	if (WiFi.status()==WL_CONNECTED) {
+		WiFi.mode(WIFI_MODE_APSTA);
 		Serial.print("WiFi connected. IP address: ");
 		Serial.println(WiFi.localIP());
 		String ip=WiFi.localIP().toString(); ip=ip.substring(ip.lastIndexOf('.')+1,ip.length());
@@ -126,8 +225,10 @@ bool connectWiFi() {
 		blink(1,800);
 		return true;  
 	} else {
-	  WiFi.mode(WIFI_MODE_AP);
-		blink(2,100);
+		WiFi.mode(WIFI_MODE_AP);
+		blink(2,150);
+		Serial.print("Failed to connect WiFi. ");
+		if (rebootOnNoWiFi) {Serial.print("Will restart in 15 seconds..."); delay(15000); ESP.restart();}
 		return false;
 	}
 }
@@ -135,7 +236,7 @@ bool connectWiFi() {
 void connectSocketIO() {
 	if (sIOshouldBeConnected) {sIOclient.disconnect();}
 	if (!sIOclient.connect(SOCKETIOHOST, SOCKETIOPORT)) {
-		//Serial.println("Failed to connect to SocketIO-server "+String(host));
+	//Serial.println("Failed to connect to SocketIO-server "+String(host));
 	}
 	if (sIOclient.connected()) {
 		Serial.println("Connected to SocketIO-server "+String(SOCKETIOHOST));
@@ -144,122 +245,21 @@ void connectSocketIO() {
 }
 
 void doScanNetworks() {
-  Serial.println("Scan start ... ");
-  int n = WiFi.scanNetworks();
-  Serial.print(n);
-  Serial.println(" network(s) found");
-  int i=0;
-  while (i<n) {
-    Serial.println(WiFi.SSID(i));
-    i++;
-  }
-}
-
-void loop(){
-	art(0,0);
-	if (abs(millis()-timeflag)>stepms) {
-		Serial.print('.');
-		timeflag = millis();
-		if (art_z<1) {temp=read_dht22(); if (temp!=0&&temp<10000) {/*Serial.println();Serial.println("TEMP: "+String(temp));*/ updateDisplay(temp);};}
-		
-		if (sIOshouldBeConnected) {
-			if (!sIOclient.connected()) {sIOclient.disconnect(); sIOshouldBeConnected=false;} 
-			else {sIOclient.heartbeat(1);}
-		}
-		if (wifi_connected && !sIOshouldBeConnected) {
-			blink(5,50); 
-			//Serial.println();
-			//Serial.println("Not connected to SocketIO-server "+String(host));
-			connectSocketIO();
-		}
-	}
-
-	if (sIOshouldBeConnected && sIOclient.monitor())
-	{
-		blink(1,50);
-		Serial.print(RID+", ");
-		Serial.print(Rname+", ");
-		Serial.println(Rcontent);
-		if (Rname=="time") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b01000000, true, 4, 0);}
-	}
-
-	WiFiClient client = server.available();
-	if (client) {                         
-		String currentLine = "";
-		String res = "";
-		while (client.connected()) {
-			if (client.available()) {
-				char c = client.read();
-				if (c == '\n') {
-					
-					if (currentLine.length() == 0) {
-						if (res.length()==0) {client.println("HTTP/1.1 404 NOT FOUND");}
-						else {
-							client.println("HTTP/1.1 200 OK");
-							client.println("Content-type:text/html");
-							client.println();
-							client.print(res);
-							Serial.print('*');
-							blink(1,50);
-						}
-						break;
-					}
-
-	        else if (currentLine.startsWith("GET /a?ssid=") ) {
-	          //GET /a?ssid=123&pass=321
-	          // Remove all preferences under opened namespace
-						clearPreferences();
-	          String qsid;
-	          qsid = urlDecode(currentLine.substring(12, currentLine.indexOf('&'))); //parse ssid
-	          String qpass;
-	          qpass = urlDecode(currentLine.substring(currentLine.lastIndexOf('=') + 1, currentLine.lastIndexOf(' '))); //parse password
-	          //savePreferences(urlDecode(currentLine.substring(12, currentLine.indexOf('&'))),urlDecode(currentLine.substring(currentLine.lastIndexOf('=') + 1, currentLine.lastIndexOf(' '))));
-	          savePreferences(qsid,qpass);
-
-	          client.println("HTTP/1.1 200 OK");
-	          client.println("Content-type:text/html");
-	          client.println();
-
-						client.print(assambleRES());
-						// the content of the HTTP response follows the header:
-	          //client.print("<h1>OK!</h1>");
-	          //client.println(qsid);
-	          //Serial.println("OK! "+qsid);
-	          //delay(5000);
-	          //ESP.restart();
-	          client.stop();
-	        }
-						
-
-					else {currentLine = "";}
-
-				} else if (c != '\r') {
-					currentLine += c;
-					if (currentLine.equals("GET / ")) {res=assambleRES();}
-					else if (currentLine.equals("GET /H ")) {digitalWrite(2, HIGH); res=assambleRES();}
-					else if (currentLine.equals("GET /L ")) {digitalWrite(2, LOW); res=assambleRES();}
-					else if (currentLine.equals("GET /ON ")) {display.setBrightness(0x03, true); res=assambleRES();}
-					else if (currentLine.equals("GET /OFF ")) {display.setBrightness(0x00, false); res=assambleRES();}
-					else if (currentLine.equals("GET /ART ")) {res=assambleRES(); art(8480,80);}
-					else if (currentLine.equals("GET /TIME ")) {res=assambleRES(); sIOclient.send("broadcast","get","time");}
-					else if (currentLine.equals("GET /SCANNETWORKS ")) {doScanNetworks(); res=assambleRES();}
-					else if (currentLine.equals("GET /CONNECTWIFI ")) {connectWiFi(); res=assambleRES();}
-					else if (currentLine.equals("GET /RESTART ")) {res=assambleRES(); restart=true;}
-					else if (currentLine.equals("GET /CONNECTSOCKET ")) {connectSocketIO(); res=assambleRES();}
-					else if (currentLine.equals("GET /SLEEP ")) {res=assambleRES(); deepsleep=true;}
-				}
-
-			}
-		}
-		client.stop();
-		if (deepsleep) {goToDeepSleep();}
-		if (restart) {ESP.restart();}
+	Serial.println("Scan start ... ");
+	int n = WiFi.scanNetworks();
+	Serial.print(n);
+	Serial.println(" network(s) found");
+	int i=0;
+	while (i<n) {
+		Serial.println(WiFi.SSID(i));
+		i++;
 	}
 }
 
 String assambleRES() {
 	++counter;
 	art(12,40);
+	blink(1,50);
 	String sid="not connected";
 	if (sIOshouldBeConnected) {sid=sIOclient.sid;}
 	return "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body style=font-size:1.5em><a href=\"/\">ESP32-Cube</a> (<a href=https://github.com/urbaninnovation/ESP32-Cube>GitHub</a>)<br>LED <a href=\"/H\">ON</a> | <a href=\"/L\">OFF</a><br>DISPLAY <a href=\"/ON\">ON</a> | <a href=\"/OFF\">OFF</a><br><a href=\"/ART\">START DISPLAY ART</a><br><a href=\"/SLEEP\">DEEP SLEEP</a> ("
@@ -272,11 +272,13 @@ String assambleRES() {
 	+wifiSSID
 	+"<br>IP: "
 	+WiFi.localIP().toString()
+	+"<br>rebootOnNoWiFi: "
+	+String(rebootOnNoWiFi)
 	+"<br>TEMP: "
 	+String(temp)
 	+"<br>COUNTER: "
 	+String(counter)
-	+"<form method='get' action='a'><label></label><input name='ssid' style=width:20%><input name='pass' style=width:20%><input type='submit'></form>"
+	+"<form method='post' action='conf'><label></label><input name='ssid' style=width:20%><input name='pass' style=width:20%><input type='checkbox' name='rebootOnNoWiFi'><label for='rebootOnNoWiFi'>rebootOnNoWiFi</label><input type='submit'></form>"
 	+"</body></html>";
 }
 
@@ -357,33 +359,33 @@ String urlDecode(const String& text)
 
 void WiFiEvent(WiFiEvent_t event)
 {
-  switch (event) {
-    case SYSTEM_EVENT_AP_START:
-      WiFi.softAPsetHostname(AP_SSID);
-      break;
-    case SYSTEM_EVENT_STA_START:
-      WiFi.setHostname(AP_SSID);
-      break;
-    case SYSTEM_EVENT_STA_CONNECTED:
-      break;
-    case SYSTEM_EVENT_AP_STA_GOT_IP6:
-      break;
-    case SYSTEM_EVENT_STA_GOT_IP:
-      wifi_connected = true;
-		  WiFi.mode(WIFI_MODE_APSTA);
-		  Serial.println("STA Connected");
-		  //Serial.print("STA SSID: ");
-		  //Serial.println(WiFi.SSID());
-		  //Serial.print("STA IPv4: ");
-		  //Serial.println(WiFi.localIP());
-      break;
-    case SYSTEM_EVENT_STA_DISCONNECTED:
-      wifi_connected = false;
-		  Serial.println("STA Disconnected");
-		  delay(1000);
-		  connectWiFi();
-      break;
-    default:
-      break;
-  }
+	switch (event) {
+		case SYSTEM_EVENT_AP_START:
+			//WiFi.softAPsetHostname(AP_SSID);
+			break;
+		case SYSTEM_EVENT_STA_START:
+			//WiFi.setHostname(AP_SSID);
+			break;
+		case SYSTEM_EVENT_STA_CONNECTED:
+			break;
+		case SYSTEM_EVENT_AP_STA_GOT_IP6:
+			break;
+		case SYSTEM_EVENT_STA_GOT_IP:
+			wifi_connected = true;
+			WiFi.mode(WIFI_MODE_APSTA);
+			Serial.println("STA Connected");
+			//Serial.print("STA SSID: ");
+			//Serial.println(WiFi.SSID());
+			//Serial.print("STA IPv4: ");
+			//Serial.println(WiFi.localIP());
+			break;
+		case SYSTEM_EVENT_STA_DISCONNECTED:
+			wifi_connected = false;
+			Serial.println("WiFi disconnected");
+			delay(10000);
+			connectWiFi();
+			break;
+		default:
+			break;
+	}
 }
