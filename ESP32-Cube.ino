@@ -1,5 +1,3 @@
-int stepms=10000; // ms to wait between updates of sensor-data
-
 #include "config.h"
 #include <WiFi.h>
 
@@ -11,7 +9,6 @@ Preferences preferences;
 String wifiSSID, wifiPassword;
 bool rebootOnNoWiFi; // Should it reboot if no WiFi could be connected?
 
-#define ESP32
 #include <SocketIOClient.h>
 SocketIOClient sIOclient;
 extern String RID;
@@ -28,16 +25,15 @@ DHT dht(DHTPIN, DHTTYPE);
 #define DIO 21
 TM1637Display display(CLK, DIO);
 
-//DEEP SLEEP while PIN 33 is connected to GND
-//#define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
+#define ESP32
 RTC_DATA_ATTR int bootCount = 0;
-
-unsigned long timeflag = 0; // millis at last update
 RTC_DATA_ATTR int counter = 0; // current counter
+int stepms=10000; // ms to wait between updates of sensor-data
+unsigned long timeflag = 0; // millis at last update
 int temp = 0; // current temperature
+unsigned long art_timestamp=0;
 int art_z=0;
 int art_d=0;
-unsigned long art_timestamp=0;
 byte art_data[] = { 0b00000001, 0b00000010, 0b00000100, 0b00001000 };
 static volatile bool wifi_connected = false;
 static volatile bool sIOshouldBeConnected=false;
@@ -50,22 +46,15 @@ void setup()
 	pinMode(2, OUTPUT);
 	blink(2,50);
 	
-	pinMode(18, OUTPUT); digitalWrite(18,true); //PIN to serve 3.3v for TM1637Display
-	pinMode(22, OUTPUT); digitalWrite(22,true); //PIN to serve 3.3v for DHT
-		
 	++bootCount;
 	Serial.println("Boot number: " + String(bootCount));
-	////DEEP SLEEP while PIN 33 is connected to GND
-	//esp_err_t rtc_gpio_deinit(GPIO_NUM_33);
-	//esp_err_t rtc_gpio_pullup_en(GPIO_NUM_33);
-	//esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,0); //1 = High, 0 = Low
-	////or while touchsensor on PIN15 isn't touched
-	touchAttachInterrupt(T3, {}, 40); // T3=PIN15, Threshold=40
-	esp_sleep_enable_touchpad_wakeup();
 
+	pinMode(18, OUTPUT); digitalWrite(18,true); //PIN to serve 3.3v for TM1637Display
 	display.setBrightness(0x03, true);
 	uint8_t data[] = { 0b01001001, 0b01001001, 0b01001001, 0b01001001 };
 	display.setSegments(data);
+
+	pinMode(22, OUTPUT); digitalWrite(22,true); //PIN to serve 3.3v for DHT
 	dht.begin();
 
 	loadPreferences();
@@ -74,52 +63,52 @@ void setup()
 	setupAP();
 
 	asyncServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
 	});
 	asyncServer.on("/H", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		digitalWrite(2, HIGH); 
-		request->send(200, "text/html", assambleRES());
 	});
 	asyncServer.on("/L", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		digitalWrite(2, LOW); 
-		request->send(200, "text/html", assambleRES());
 	});
 	asyncServer.on("/ON", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		display.setBrightness(0x03, true);
-		request->send(200, "text/html", assambleRES());
 	});
 	asyncServer.on("/OFF", HTTP_GET, [](AsyncWebServerRequest *request){
-		display.setBrightness(0x00, true);
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
+		display.setBrightness(0x00, false);
 	}); 
 	asyncServer.on("/ART", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		art(8480,80);
-		request->send(200, "text/html", assambleRES());
 	}); 
 	asyncServer.on("/TIME", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		sIOclient.send("broadcast","get","time");
-		request->send(200, "text/html", assambleRES());
 	});
 	asyncServer.on("/SCANNETWORKS", HTTP_GET, [](AsyncWebServerRequest *request){
+		request->send(200, "text/html", assembleRES());
 		doScanNetworks();
-		request->send(200, "text/html", assambleRES());
 	});
 	asyncServer.on("/CONNECTWIFI", HTTP_GET, [](AsyncWebServerRequest *request){
 		//connectWiFi();
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
 		restart=true;
 	});
 	asyncServer.on("/RESTART", HTTP_GET, [](AsyncWebServerRequest *request){
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
 		restart=true;
 	});
 	asyncServer.on("/CONNECTSOCKET", HTTP_GET, [](AsyncWebServerRequest *request){
 		//connectSocketIO();
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
 		restart=true;
 	});
 	asyncServer.on("/SLEEP", HTTP_GET, [](AsyncWebServerRequest *request){
-		request->send(200, "text/html", assambleRES());
+		request->send(200, "text/html", assembleRES());
 		deepsleep=true;
 	});
 	
@@ -128,7 +117,7 @@ void setup()
 			savePreferences(request->arg("ssid"),request->arg("pass"),(request->arg("rebootOnNoWiFi")=="on"));
 			request->send(200, "text/html", request->arg("ssid")+" "+request->arg("pass")+" "+String(request->arg("rebootOnNoWiFi")=="on"));
 		} else {
-			request->send(200, "text/html", assambleRES());
+			request->send(200, "text/html", assembleRES());
 		}
 	}); 
 
@@ -256,7 +245,7 @@ void doScanNetworks() {
 	}
 }
 
-String assambleRES() {
+String assembleRES() {
 	++counter;
 	art(12,40);
 	blink(1,50);
@@ -319,7 +308,15 @@ void updateDisplay(int n) {
 }
 
 void goToDeepSleep() {
+	//#define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex
 	//DEEP SLEEP while PIN 33 is connected to GND //or while touchsensor on PIN15 isn't touched
+	////DEEP SLEEP while PIN 33 is connected to GND
+	//esp_err_t rtc_gpio_deinit(GPIO_NUM_33);
+	//esp_err_t rtc_gpio_pullup_en(GPIO_NUM_33);
+	//esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,0); //1 = High, 0 = Low
+	////or while touchsensor on PIN15 isn't touched
+	touchAttachInterrupt(T3, {}, 40); // T3=PIN15, Threshold=40
+	esp_sleep_enable_touchpad_wakeup();
 	display.setBrightness(0x00, false); updateDisplay(0); digitalWrite(2, true); 
 	Serial.println("Going to sleep now");
 	delay(1000);
