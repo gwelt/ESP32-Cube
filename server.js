@@ -10,7 +10,7 @@ var port = config.PORT || process.env.PORT || 3000;
 server.listen(port, function () {
   console.log('Server listening at port %d', port);
 });
-app.use('/:id/:command', function (req, res, next) {
+app.use('/ESP32-Cube/:id/:command', function (req, res, next) {
   switch (req.params.command) {
     case 'act':
       //console.log('/act');
@@ -56,7 +56,7 @@ app.use('/:id/:command', function (req, res, next) {
   }
 })
 app.use('/', function (req, res, next) {
-  res.send('Valid calls: <a href=/all/act>/all/act</a>, <a href=/[someid]/act>/[someid]/act</a>, <a href=/html/list>/html/list</a>, <a href=/api/list>/api/list</a>');
+  res.send('Valid calls: <a href=/ESP32-Cube/all/act>/ESP32-Cube/all/act</a>, <a href=/ESP32-Cube/[someid]/act>/ESP32-Cube/[someid]/act</a>, <a href=/ESP32-Cube/html/list>/ESP32-Cube/html/list</a>, <a href=/ESP32-Cube/api/list>/ESP32-Cube/api/list</a>');
 })
 //app.use(express.static(path.join(__dirname, 'public')));
 
