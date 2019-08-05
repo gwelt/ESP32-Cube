@@ -48,16 +48,17 @@ app.use('/ESP32-Cube/:id/:command', function (req, res, next) {
       break;
     case 'number':
       //console.log('/time');
+      let number=getNumberAsJSON();
       if (req.params.id=='all') {
         // to all
-        io.sockets.emit('server',getNumberAsJSON());
-        res.send('server to all: '+JSON.stringify(getNumberAsJSON()));
+        io.sockets.emit('server',number);
+        res.send('server to all: '+JSON.stringify(number));
       } else {
         let s=socketList.find(function(e) {return e.id==req.params.id});
         if (s) {
           // to receiver-id only
-          s.emit('server',getNumberAsJSON());
-          res.send('server > '+s.id+': '+JSON.stringify(getNumberAsJSON()));
+          s.emit('server',number);
+          res.send('server > '+s.id+': '+JSON.stringify(number));
         } else {
           res.send('id not found');
         }
