@@ -46,6 +46,23 @@ app.use('/ESP32-Cube/:id/:command', function (req, res, next) {
         }
       }
       break;
+    case 'number':
+      //console.log('/time');
+      if (req.params.id=='all') {
+        // to all
+        io.sockets.emit('server',getNumberAsJSON());
+        res.send('server to all: '+JSON.stringify(getNumberAsJSON()));
+      } else {
+        let s=socketList.find(function(e) {return e.id==req.params.id});
+        if (s) {
+          // to receiver-id only
+          s.emit('server',getNumberAsJSON());
+          res.send('server > '+s.id+': '+JSON.stringify(getNumberAsJSON()));
+        } else {
+          res.send('id not found');
+        }
+      }
+      break;
     case 'list':
       //console.log('/list');
       if (req.params.id=='api') {res.send(JSON.stringify( socketList.reduce((a,v)=>{a.push({id:v.id,name:v.username}); return a},[]) ));}
@@ -99,6 +116,10 @@ function getTimeAsJSON() {
   let h=new Date().getHours(); if (h<10) {h='0'+h;}
   let m=new Date().getMinutes().toString(); if (m<10) {m='0'+m;}
   return {time: h+''+m};
+}
+
+function getNumberAsJSON() {
+  return {number: Math.floor(Math.random()*10000)};
 }
 
 

@@ -103,9 +103,9 @@ void setup()
 		restart=true;
 	});
 	asyncServer.on("/CONNECTSOCKET", HTTP_GET, [](AsyncWebServerRequest *request){
-		//connectSocketIO();
+		connectSocketIO();
 		request->send(200, "text/html", assembleRES());
-		restart=true;
+		//restart=true;
 	});
 	asyncServer.on("/SLEEP", HTTP_GET, [](AsyncWebServerRequest *request){
 		request->send(200, "text/html", assembleRES());
@@ -126,6 +126,7 @@ void setup()
 	connectWiFi();
 }
 
+int six_steps_for_a_minute=6;
 void loop(){
 	if (deepsleep) {WiFi.disconnect(); delay(1000); goToDeepSleep();}
 	if (restart) {WiFi.disconnect(); delay(1000); ESP.restart();}
@@ -134,11 +135,18 @@ void loop(){
 	if (abs(millis()-timeflag)>stepms) {
 		Serial.print('.');
 		timeflag = millis();
-		if (art_z<1) {temp=read_dht22(); if (temp!=0&&temp<10000) {/*Serial.println();Serial.println("TEMP: "+String(temp));*/ updateDisplay(temp);};}
+		//if (art_z<1) {temp=read_dht22(); if (temp!=0&&temp<10000) {/*Serial.println();Serial.println("TEMP: "+String(temp));*/ updateDisplay(temp);};}
 		
 		if (sIOshouldBeConnected) {
 			if (!sIOclient.connected()) {sIOclient.disconnect(); sIOshouldBeConnected=false;} 
-			else {sIOclient.heartbeat(1);}
+			else {
+				sIOclient.heartbeat(1); 
+				if (six_steps_for_a_minute>=6) {
+					sIOclient.send("broadcast","get","time");
+					six_steps_for_a_minute=0;
+				}
+				six_steps_for_a_minute++;
+			}
 		}
 		if (wifi_connected && !sIOshouldBeConnected) {
 			blink(5,50); 
@@ -153,6 +161,8 @@ void loop(){
 		Serial.print(Rname+", ");
 		Serial.println(Rcontent);
 		if (Rname=="time") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b01000000, true, 4, 0);}
+		if (Rname=="number") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b00000000, true, 4, 0);}
+		if (Rname=="welcomemessage") {art_z=0; art(12,440);}
 	}
 }
 
@@ -223,10 +233,10 @@ bool connectWiFi() {
 }
 
 void connectSocketIO() {
-	if (sIOshouldBeConnected) {sIOclient.disconnect();}
+	if (sIOshouldBeConnected) {sIOclient.disconnect();} 
 	if (!sIOclient.connect(SOCKETIOHOST, SOCKETIOPORT)) {
-	//Serial.println("Failed to connect to SocketIO-server "+String(host));
-	}
+		Serial.println("Failed to connect to SocketIO-server "+String(SOCKETIOHOST));
+	}	
 	if (sIOclient.connected()) {
 		Serial.println("Connected to SocketIO-server "+String(SOCKETIOHOST));
 		sIOshouldBeConnected=true;
@@ -251,7 +261,7 @@ String assembleRES() {
 	blink(1,50);
 	String sid="not connected";
 	if (sIOshouldBeConnected) {sid=sIOclient.sid;}
-	return "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body style=font-size:1.5em><a href=\"/\">ESP32-Cube</a> (<a href=https://github.com/urbaninnovation/ESP32-Cube>GitHub</a>)<br>LED <a href=\"/H\">ON</a> | <a href=\"/L\">OFF</a><br>DISPLAY <a href=\"/ON\">ON</a> | <a href=\"/OFF\">OFF</a><br><a href=\"/ART\">START DISPLAY ART</a><br><a href=\"/SLEEP\">DEEP SLEEP</a> ("
+	return "<html><head><title>ESP32-Cube</title><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body style=font-size:1.5em><a href=\"/\">ESP32-Cube</a> (<a href=https://github.com/urbaninnovation/ESP32-Cube>GitHub</a>)<br>LED <a href=\"/H\">ON</a> | <a href=\"/L\">OFF</a><br>DISPLAY <a href=\"/ON\">ON</a> | <a href=\"/OFF\">OFF</a><br><a href=\"/ART\">START DISPLAY ART</a><br><a href=\"/SLEEP\">DEEP SLEEP</a> ("
 	+String(bootCount)
 	+")<br><a href=\"/RESTART\">RESTART</a><br><a href=\"/SCANNETWORKS\">SCAN NETWORKS</a><br><a href=\"/CONNECTWIFI\">CONNECT TO WIFI</a><br><a href=\"/CONNECTSOCKET\">CONNECT TO SERVER</a><br><a href=\"/TIME\">REQUEST TIME</a><br>SID: "
 	+String(sid)
