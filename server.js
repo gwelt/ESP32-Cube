@@ -66,7 +66,7 @@ app.use('/ESP32-Cube/:id/:command', function (req, res, next) {
     case 'list':
       //console.log('/list');
       if (req.params.id=='api') {res.send(JSON.stringify( socketList.reduce((a,v)=>{a.push({id:v.id,name:v.username}); return a},[]) ));}
-      else {res.send( socketList.reduce((a,v)=>{a+=v.id+' <a href=../'+v.id+'/act>&gt; act</a> <a href=../'+v.id+'/time>&gt; time</a><br>'; return a},[]) );}
+      else {res.send( socketList.reduce((a,v)=>{a+=v.id+' <a href=../'+v.id+'/act>&gt; act</a> <a href=../'+v.id+'/time>&gt; time</a> <a href=../'+v.id+'/number>&gt; number</a><br>'; return a},[]) );}
       break;
     default:
       res.sendStatus(404);
@@ -119,7 +119,7 @@ function getTimeAsJSON() {
 }
 
 function getNumberAsJSON() {
-  return {number: Math.floor(Math.random()*10000)};
+  return {number: Math.floor(Math.random()*10000).toString()};
 }
 
 

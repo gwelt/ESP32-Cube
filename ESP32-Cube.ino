@@ -163,6 +163,8 @@ void loop(){
 		if (Rname=="time") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b01000000, true, 4, 0);}
 		if (Rname=="number") {art_z=0; display.showNumberDecEx(Rcontent.toInt(), 0b00000000, true, 4, 0);}
 		if (Rname=="welcomemessage") {art_z=0; art(12,440);}
+		if (Rname=="") {connectSocketIO();}
+		Rname="";
 	}
 }
 
